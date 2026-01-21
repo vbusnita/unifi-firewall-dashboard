@@ -12,19 +12,22 @@ parses them, shows stats (blocks count, top IPs/ports), and uses Grok AI for sum
 Runs on http://127.0.0.1:5000
 
 ## Structure
+```text
 unifi-firewall-dashboard/
 ├── .env                  # secrets - gitignored
 ├── .gitignore
-├── prd.md                # paste our latest version here
+├── prd.md                # product requirements & plan
 ├── README.md
 ├── requirements.txt
-├── setup.sh              # setup script for the project  
-├── run.py                # we'll fill this soon
+├── setup.sh              # one-command environment bootstrap
+├── run.py                # Flask entry point (we'll fill this)
 ├── app/
 │   ├── __init__.py
-│   ├── routes.py
-│   └── utils.py          # parsing, api fetch, etc.
+│   ├── routes.py         # Flask routes
+│   └── utils.py          # API fetch, parsing, stats, AI summary
 ├── templates/
-│   └── index.html        # main dashboard template
-└── static/               # css/js if needed
+│   └── index.html        # main dashboard template (Jinja)
+└── static/               # optional CSS/JS
     └── style.css
+```
+
