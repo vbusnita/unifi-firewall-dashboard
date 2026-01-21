@@ -12,8 +12,19 @@ parses them, shows stats (blocks count, top IPs/ports), and uses Grok AI for sum
 Runs on http://127.0.0.1:5000
 
 ## Structure
-- prd.md          → product requirements & plan
-- app/            → Flask app code
-- templates/      → HTML/Jinja templates
-- static/         → CSS/JS if needed
-- run.py          → entry point
+unifi-firewall-dashboard/
+├── .env                  # secrets - gitignored
+├── .gitignore
+├── prd.md                # paste our latest version here
+├── README.md
+├── requirements.txt
+├── setup.sh              # setup script for the project  
+├── run.py                # we'll fill this soon
+├── app/
+│   ├── __init__.py
+│   ├── routes.py
+│   └── utils.py          # parsing, api fetch, etc.
+├── templates/
+│   └── index.html        # main dashboard template
+└── static/               # css/js if needed
+    └── style.css
