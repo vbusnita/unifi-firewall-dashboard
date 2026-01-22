@@ -131,8 +131,74 @@ def parse_firewall_drops(raw_logs):
 
     return parsed, stats
 
+from normalizer import normalize_logs   # <-- new import
+
+def generate_ai_summary(parsed_logs, use_normalizer=True, max_logs=100):
+    """
+    Generate AI summary from parsed logs (with optional normalizer).
+    Returns {'summary': str, 'input_tokens': int, 'output_tokens': int, 'cost_est': float}
+    """
+    load_dotenv()
+    grok_api_key = os.getenv('GROK_API_KEY')
+
+    if not grok_api_key:
+        print("Error: Missing GROK_API_KEY in .env")
+        return {'summary': '', 'input_tokens': 0, 'output_tokens': 0, 'cost_est': 0.0}
+
+    if use_normalizer:
+        batch_text = normalize_logs(parsed_logs)
+    else:
+        # Baseline: full raw messages
+        batch = [p['raw_message'] for p in parsed_logs[:max_logs]]
+        batch_text = '\n'.join(batch)
+
+    prompt = (
+        f"Summarize these recent UniFi firewall blocks: {batch_text}. "
+        "Focus on top threats, unusual patterns, common ports, attacking subnets, "
+        "overall status (low/medium/high risk). Concise, plain English."
+    )
+
+    url = "https://api.x.ai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {grok_api_key}",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "model": "grok-4-1-fast-reasoning",
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.7,
+        "max_tokens": 300
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        response.raise_for_status()
+
+        result = response.json()
+        summary = result['choices'][0]['message']['content']
+        usage = result['usage']
+        input_tokens = usage['prompt_tokens']
+        output_tokens = usage['completion_tokens']
+
+        cost_est = (input_tokens / 1_000_000 * 0.20) + (output_tokens / 1_000_000 * 0.50)
+
+        print(f"AI summary (normalizer={use_normalizer}): Input {input_tokens}, Output {output_tokens}, Est ${cost_est:.6f}")
+
+        return {
+            'summary': summary,
+            'input_tokens': input_tokens,
+            'output_tokens': output_tokens,
+            'cost_est': cost_est
+        }
+
+    except Exception as e:
+        print(f"AI call failed: {e}")
+        return {'summary': '', 'input_tokens': 0, 'output_tokens': 0, 'cost_est': 0.0}
+
+# Test block
 if __name__ == "__main__":
-    print("Running test...")
+    print("Running baseline (no normalizer)...")
     raw = fetch_firewall_drops(limit=200)
     parsed, stats = parse_firewall_drops(raw)
 
@@ -140,6 +206,15 @@ if __name__ == "__main__":
     print("Stats:")
     print(json.dumps(stats, indent=2))
 
-    if parsed:
-        print("\nFirst parsed event:")
-        print(json.dumps(parsed[0], indent=2))
+    ai_baseline = generate_ai_summary(parsed, use_normalizer=False)
+    print("\nBaseline Summary:")
+    print(ai_baseline['summary'])
+    print(f"Tokens: {ai_baseline['input_tokens']} in / {ai_baseline['output_tokens']} out")
+    print(f"Est cost: ${ai_baseline['cost_est']:.6f}")
+
+    print("\n\nRunning with normalizer...")
+    ai_norm = generate_ai_summary(parsed, use_normalizer=True)
+    print("\nNormalized Summary:")
+    print(ai_norm['summary'])
+    print(f"Tokens: {ai_norm['input_tokens']} in / {ai_norm['output_tokens']} out")
+    print(f"Est cost: ${ai_norm['cost_est']:.6f}")
