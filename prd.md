@@ -1,54 +1,79 @@
-# UniFi Network Status Dashboard
+# UniFi Firewall Drops Dashboard
 
 ## Overview
-A single-page web dashboard that queries Graylog for firewall drop logs from UniFi UXG-Pro, filters for last 24 hours, parses key events (blocked connections), and uses Grok AI to generate human-readable summaries (e.g., "Blocked 45 TCP probes on port 8443 from scanners"). Displays overview stats, top threats, and timeline. Logs are raw iptables style from /var/log/ulog/syslogemu.log exported via SIEM.
+Single-page Flask dashboard that queries Graylog for UXG-Pro firewall drop logs, parses them, shows basic stats (total blocks, top attacking subnets, common targeted ports), and uses Grok AI to generate a concise natural-language summary of the last 24 hours of activity.
 
 ## Goals
-- At-a-glance home network security insight without manual digging.
-- Success: Loads <5s, summarizes 100+ logs accurately, runs locally/self-sustained.
+- Quick at-a-glance view of "is my network being attacked right now?"
+- Low maintenance, runs locally on MacBook
+- Uses only open-source/free tools where possible
 
-## Tech Stack
-- Backend: Python 3.12+ (Flask, requests for Graylog API, re for parsing, pandas for stats)
-- AI: xAI Grok API
-- Frontend: Simple HTML/CSS/JS (Jinja templates, HTMX optional for auto-refresh)
-- Config: .env for GRAYLOG_URL, GRAYLOG_API_TOKEN, GROK_API_KEY
+## Non-functional Requirements
+- Runs on localhost:5000
+- Auto-refreshes every 5 minutes (JS timer)
+- Graceful handling when no logs or Graylog down (fallback message, retry button)
+- Secure: no public exposure, API keys in .env only
+- Unit tests for each feature (using pytest)
+- Token tracking for AI calls: log input/output tokens to console, show total in UI footer
+- Cost optimization: Normalizer to truncate/condense log batches before AI prompt
+
+## Tech Choices
+- Backend: Flask
+- Env: python-dotenv
+- HTTP: requests
+- Parsing: re + pandas for stats
+- AI: xAI Grok API (grok-4-1-fast-reasoning)
+- Data source: Graylog REST API (/api/search/universal/relative)
+- Logs format: raw iptables ulog style (e.g. [WAN_LOCAL-D-40000] DESCR=... SRC=... DPT=...)
+- UI: Dark-mode default (sleek, xAI-inspired: high-contrast blacks/grays, minimal accents; no heavy libs, use vanilla CSS + Chart.js for charts)
+- Testing: pytest for unit tests
 
 ## Features
 
 1. **Log Ingestion**
-   - Description: Query Graylog API for messages with "[WAN_LOCAL-D" OR "Log WAN to Gateway Drops" from last 24h (relative timerange 86400s).
-   - Acceptance Criteria: Fetches JSON with timestamp, source, full message; handles 1000+ results.
-   - Tests: Mock API → returns list of messages.
+   - Description: Query Graylog API for messages with "[WAN_LOCAL-D" OR "Log WAN to Gateway Drops" from last 24 hours.
+   - Acceptance Criteria: Fetches JSON with at least timestamp, source, full message; handles 1000+ results.
+   - Tests: Unit tests for successful fetch, error cases (bad token, no results, timeout).
 
 2. **Log Parsing & Filtering**
-   - Description: Parse raw message lines like "[WAN_LOCAL-D-40000] DESCR="Log WAN to Gateway Drops" IN=eth0 ... SRC=... DST=... PROTO=... SPT=... DPT=...".
-   - Extract: timestamp, src_ip, dst_ip (DST=your WAN), proto, src_port, dst_port, rule_id.
-   - Filter: Only WAN_LOCAL drops, last 24h, exclude internal SRC (e.g., 192.168.x).
-   - Acceptance Criteria: Structured list of dicts; ignores non-drop lines.
-   - Tests: Sample line → correct fields.
+   - Description: Parse raw message lines like "UXG Pro Pro [WAN_LOCAL-D-40000] DESCR=\"Log WAN to Gateway Drops\" ... SRC=... DST=... PROTO=... SPT=... DPT=...".
+   - Extract: timestamp, rule_id (e.g. 40000), src_ip, dst_ip, proto, src_port, dst_port.
+   - Filter: Only valid WAN_LOCAL drops (regex match required).
+   - Stats: total_blocks, top_src_subnets (/24 grouping for CGNAT), top_dst_ports (top 10).
+   - Acceptance Criteria: 90%+ match rate on real fetches; ignores noise.
+   - Tests: Unit tests for parsing sample lines, edge cases (missing fields).
 
 3. **AI-Powered Summary**
-   - Description: Batch 50-200 parsed events, send to Grok API: "Summarize these UniFi firewall blocks last 24h: top attacking IPs (group by /24 subnet), common targeted ports, potential threats (e.g., RDP scans on 3389), overall status. Concise, plain English."
-   - Acceptance Criteria: Readable summary (e.g., "45 blocks, mostly TCP on 8443 from 167.94.138.0/24 scanners — network secure").
-   - Tests: Mock events → API call succeeds.
+   - Description: Batch parsed events (up to 200), normalize/condense (e.g., group by subnet/port for "pure signal"), send to Grok API with prompt: "Summarize these UniFi firewall blocks last 24h: top IPs (group /24), common ports, potential threats (e.g., RDP on 3389), overall status. Concise, plain English."
+   - Normalization: Dedupe/summarize similar events (e.g., "45 probes on DPT=51413 from 167.94.x.x") to cut tokens 50-80%.
+   - Track: Input/output tokens per call (log to console/UI).
+   - Acceptance Criteria: Readable summary (2-5 sentences); handles empty batch ("No recent threats").
+   - Tests: Unit tests for normalization, mock AI call.
 
 4. **Dashboard Display**
-   - Description: Flask route / with template: Status color (green <50 blocks, yellow 50-200, red >200), total blocks, top 5 src subnets, top 10 dst ports (table/chart), AI summary, simple timeline (blocks per hour).
-   - Auto-refresh: Every 5min via JS/HTMX.
-   - Acceptance Criteria: Responsive, loads data on request.
-   - Tests: Browser renders stats/summary.
+   - Description: Flask route / with Jinja template: Dark-mode UI (sleek xAI-style: black/gray background, white/accent text, simple cards/tables, Chart.js bar charts for ports/subnets).
+     - Status card (color-coded green/yellow/red based on total blocks: <50 green, 50-300 yellow, >300 red)
+     - Total blocks count
+     - Top 5 src subnets table
+     - Top 10 dst ports chart
+     - AI summary text
+     - Simple timeline (blocks per hour bar chart)
+     - Token usage footer (e.g., "Last AI call: 1234 in / 567 out tokens")
+   - Auto-refresh: JS setInterval to reload every 5 min.
+   - Acceptance Criteria: Responsive on MacBook, loads data on request.
+   - Tests: Integration test for route response, mock data.
 
 5. **Configuration & Security**
-   - Description: .env for API keys/URLs; local run only (no public).
-   - Acceptance Criteria: Keys not hardcoded.
+   - Description: .env for keys; local run only.
+   - Acceptance Criteria: App starts without hardcoded secrets.
 
 ## Milestones
-1. API fetch + parse drops.
-2. Stats aggregation + AI summary.
-3. Flask dashboard.
-4. Tests + polish.
+1. Fetch + parse + stats (core backend)
+2. AI summary + normalization
+3. Flask route + UI (dark-mode sleek)
+4. Tests + polish
 
 ## Risks/Notes
-- Log volume: Cap queries at 1000 results; rate-limit if needed.
-- Format: Raw iptables; watch for CEF if IPS blocks included.
-- Open questions: Status thresholds, chart lib (e.g., Chart.js)?
+- Log volume: Cap at 1000/query; normalize to <5k tokens for AI.
+- Graylog downtime: Cache last fetch in local JSON if >1h old.
+- Open: Add GeoIP for top attackers? Email alerts on red status?
