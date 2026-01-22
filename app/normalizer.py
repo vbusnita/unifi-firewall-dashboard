@@ -1,38 +1,56 @@
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 
-def normalize_logs(parsed_logs, max_groups=50):
-    """
-    Normalize parsed firewall logs into concise summary text for lower token usage.
-    
-    Groups events by (src_subnet /24, dst_port, proto) and counts occurrences.
-    Returns a multi-line string suitable for AI prompts.
-    
-    Example output line: "45 UDP probes on DPT=51413 from 173.249.19.0/24"
-    """
+def normalize_logs(
+    parsed_logs,
+    max_groups=50,
+    exclude_ports=None,
+    threat_ports=None
+):
+    if exclude_ports is None:
+        exclude_ports = set()  # no exclusion by default
+
+    if threat_ports is None:
+        threat_ports = {
+            22: 5,      # SSH
+            23: 5,      # Telnet
+            3389: 10,   # RDP
+            445: 8,     # SMB
+            1433: 8,    # MSSQL
+            3306: 6     # MySQL
+        }
+
     groups = defaultdict(int)
+    threat_score_total = 0
 
     for p in parsed_logs:
-        if p.get('src_ip') and p.get('dst_port') and p.get('proto'):
-            subnet = '.'.join(p['src_ip'].split('.')[:3]) + '.0/24'
-            key = (subnet, p['dst_port'], p['proto'])
-            groups[key] += 1
+        dst_port = p.get('dst_port')
+        if dst_port is None or dst_port in exclude_ports:
+            continue
 
-    # Sort by count descending, take top N
+        subnet = '.'.join(p['src_ip'].split('.')[:3]) + '.0/24' if p.get('src_ip') else 'unknown'
+        proto = p.get('proto', 'UNKNOWN')
+        key = (subnet, dst_port, proto)
+        groups[key] += 1
+
+        score = threat_ports.get(dst_port, 1)
+        threat_score_total += score
+
     sorted_groups = sorted(groups.items(), key=lambda x: x[1], reverse=True)[:max_groups]
 
     lines = []
     for (subnet, dst_port, proto), count in sorted_groups:
-        lines.append(f"{count} {proto} probes on DPT={dst_port} from {subnet}")
+        score = threat_ports.get(dst_port, 1)
+        threat_level = "HIGH" if score >= 8 else "MEDIUM" if score >= 3 else "LOW"
+        lines.append(f"{count} {proto} probes on DPT={dst_port} ({threat_level}) from {subnet}")
 
     condensed = '\n'.join(lines)
-    
-    # Optional logging for visibility
+
+    summary_stats = f"\nTotal normalized events: {sum(groups.values())} (from {len(parsed_logs)} raw)"
+    if threat_score_total > 0:
+        summary_stats += f"\nThreat score total: {threat_score_total}"
+
     print(f"[Normalizer] Condensed {len(parsed_logs)} logs → {len(lines)} groups")
+    print(summary_stats)
 
-    return condensed
-
-
-# Optional: future variants can live here as separate functions
-# def normalize_logs_v2(...): ...
-# def normalize_logs_simple(...): ...
+    return condensed + summary_stats
