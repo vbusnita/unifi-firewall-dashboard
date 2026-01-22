@@ -45,12 +45,14 @@ def fetch_firewall_drops(range_seconds=86400, limit=1000):
 
         normalized = []
         for item in messages:
-            msg = item.get('message', {})
+            # Real Graylog: item = {'message': {actual fields}}
+            # Mock/simple: item = {actual fields}
+            msg = item.get('message', item)  # fallback to item itself if no nested 'message'
             normalized.append({
                 'timestamp': msg.get('timestamp'),
                 'source': msg.get('source'),
-                'message': msg.get('message')
-            })
+                'message': msg.get('message')   # real nested message text
+        })
 
         print(f"Fetched {len(normalized)} firewall drop logs")
         return normalized
