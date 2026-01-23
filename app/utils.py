@@ -1,3 +1,4 @@
+# utils.py (final, with prompt extracted to ai_prompts.py + other polishes)
 import os
 import base64
 import requests
@@ -5,6 +6,10 @@ import json
 import re
 from collections import Counter
 from dotenv import load_dotenv
+from app.normalizer import normalize_logs
+from app.ai_prompt import get_summary_prompt  # New import for extracted prompt
+from datetime import datetime
+
 
 def fetch_firewall_drops(range_seconds=86400, limit=1000):
     """
@@ -52,7 +57,7 @@ def fetch_firewall_drops(range_seconds=86400, limit=1000):
                 'timestamp': msg.get('timestamp'),
                 'source': msg.get('source'),
                 'message': msg.get('message')   # real nested message text
-        })
+            })
 
         print(f"Fetched {len(normalized)} firewall drop logs")
         return normalized
@@ -131,13 +136,31 @@ def parse_firewall_drops(raw_logs):
 
     return parsed, stats
 
-from normalizer import normalize_logs   # <-- new import
+def log_tokens(input_tokens, output_tokens, cost_est):
+    """Log AI token usage to console and file."""
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"{timestamp} | Input: {input_tokens} | Output: {output_tokens} | Est cost: ${cost_est:.6f}\n"
+    
+    # Console
+    print(f"AI tokens logged: {line.strip()}")
+    
+    # File (append mode)
+    try:
+        with open("ai_token_log.txt", "a") as f:
+            f.write(line)
+    except Exception as e:
+        print(f"Warning: Could not write to ai_token_log.txt: {e}")
 
-def generate_ai_summary(parsed_logs, use_normalizer=True, max_logs=100):
+
+def generate_ai_summary(parsed_logs, use_normalizer=True, log_to_file=True, max_logs=100):
     """
     Generate AI summary from parsed logs (with optional normalizer).
     Returns {'summary': str, 'input_tokens': int, 'output_tokens': int, 'cost_est': float}
     """
+    if not parsed_logs:
+        print("No parsed logs; returning default summary.")
+        return {'summary': 'No recent threats.', 'input_tokens': 0, 'output_tokens': 0, 'cost_est': 0.0}
+
     load_dotenv()
     grok_api_key = os.getenv('GROK_API_KEY')
 
@@ -147,16 +170,14 @@ def generate_ai_summary(parsed_logs, use_normalizer=True, max_logs=100):
 
     if use_normalizer:
         batch_text = normalize_logs(parsed_logs)
+        approx_tokens_before = sum(len(p['raw_message']) for p in parsed_logs) // 4  # rough char-to-token
+        approx_tokens_after = len(batch_text) // 4
+        print(f"[Token Opt] Before norm: ~{approx_tokens_before} tokens; After: ~{approx_tokens_after} ({(approx_tokens_after / approx_tokens_before * 100) if approx_tokens_before else 0:.1f}% of original)")
     else:
-        # Baseline: full raw messages
         batch = [p['raw_message'] for p in parsed_logs[:max_logs]]
         batch_text = '\n'.join(batch)
 
-    prompt = (
-        f"Summarize these recent UniFi firewall blocks: {batch_text}. "
-        "Focus on top threats, unusual patterns, common ports, attacking subnets, "
-        "overall status (low/medium/high risk). Concise, plain English."
-    )
+    prompt = get_summary_prompt(batch_text)  # Extracted to ai_prompts.py
 
     url = "https://api.x.ai/v1/chat/completions"
     headers = {
@@ -176,12 +197,15 @@ def generate_ai_summary(parsed_logs, use_normalizer=True, max_logs=100):
         response.raise_for_status()
 
         result = response.json()
-        summary = result['choices'][0]['message']['content']
+        summary = result['choices'][0]['message']['content'].strip()
         usage = result['usage']
-        input_tokens = usage['prompt_tokens']
-        output_tokens = usage['completion_tokens']
+        input_tokens = usage.get('prompt_tokens', 0)
+        output_tokens = usage.get('completion_tokens', 0)
 
         cost_est = (input_tokens / 1_000_000 * 0.20) + (output_tokens / 1_000_000 * 0.50)
+
+        if log_to_file:
+            log_tokens(input_tokens, output_tokens, cost_est)
 
         print(f"AI summary (normalizer={use_normalizer}): Input {input_tokens}, Output {output_tokens}, Est ${cost_est:.6f}")
 
@@ -192,8 +216,14 @@ def generate_ai_summary(parsed_logs, use_normalizer=True, max_logs=100):
             'cost_est': cost_est
         }
 
+    except requests.exceptions.HTTPError as e:
+        print(f"Grok API HTTP error: {e.response.status_code} - {e.response.text[:500]}")
+        return {'summary': '', 'input_tokens': 0, 'output_tokens': 0, 'cost_est': 0.0}
+    except requests.exceptions.RequestException as e:
+        print(f"Request failed: {e}")
+        return {'summary': '', 'input_tokens': 0, 'output_tokens': 0, 'cost_est': 0.0}
     except Exception as e:
-        print(f"AI call failed: {e}")
+        print(f"Unexpected error: {e}")
         return {'summary': '', 'input_tokens': 0, 'output_tokens': 0, 'cost_est': 0.0}
 
 # Test block
@@ -206,11 +236,11 @@ if __name__ == "__main__":
     print("Stats:")
     print(json.dumps(stats, indent=2))
 
-    ai_baseline = generate_ai_summary(parsed, use_normalizer=False)
-    print("\nBaseline Summary:")
-    print(ai_baseline['summary'])
-    print(f"Tokens: {ai_baseline['input_tokens']} in / {ai_baseline['output_tokens']} out")
-    print(f"Est cost: ${ai_baseline['cost_est']:.6f}")
+    # ai_baseline = generate_ai_summary(parsed, use_normalizer=False)
+    # print("\nBaseline Summary:")
+    # print(ai_baseline['summary'])
+    # print(f"Tokens: {ai_baseline['input_tokens']} in / {ai_baseline['output_tokens']} out")
+    # print(f"Est cost: ${ai_baseline['cost_est']:.6f}")
 
     print("\n\nRunning with normalizer...")
     ai_norm = generate_ai_summary(parsed, use_normalizer=True)
