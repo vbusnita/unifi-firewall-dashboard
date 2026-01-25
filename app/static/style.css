@@ -1,0 +1,100 @@
+body {
+    background-color: #000;
+    color: #FFF;
+    font-family: system-ui, -apple-system, sans-serif;
+    margin: 0;
+    padding: 1rem;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1rem;
+}
+
+.card {
+    background-color: #333;
+    border: 1px solid #555;
+    padding: 1rem;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+}
+
+.status {
+    grid-column: span 2;  /* Wider for prominence */
+    text-align: center;
+}
+
+.chart-card {
+    grid-column: span 2;  /* Charts take more space */
+}
+
+h1, h2, h3 {
+    margin-top: 0;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th, td {
+    padding: 0.5rem;
+    border-bottom: 1px solid #555;
+    text-align: left;
+}
+
+.footer {
+    grid-column: 1 / -1;
+    text-align: center;
+    font-size: 0.8rem;
+    color: #AAA;
+    margin-top: 1rem;
+}
+
+.fallback {
+    grid-column: 1 / -1;
+    text-align: center;
+}
+
+button {
+    background: #00BFFF;
+    color: #000;
+    border: none;
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+@media (max-width: 768px) {
+    .container {
+        grid-template-columns: 1fr;
+    }
+    .status, .chart-card {
+        grid-column: 1;
+    }
+
+.header-card {
+    grid-column: span 2;
+    background-color: #222;
+    padding: 0.5rem;
+}
+
+#speakReport {
+    background: #00BFFF;
+    color: #000;
+    border: none;
+    padding: 0.75rem 1.5rem;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 1rem;
+    font-weight: bold;
+}
+
+#speakReport:hover {
+    background: #00A0DF;
+}
+
+}
